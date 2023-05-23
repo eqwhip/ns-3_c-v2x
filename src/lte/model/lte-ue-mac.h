@@ -434,6 +434,26 @@ private:
   std::list<SidelinkCommResourcePoolV2x::SidelinkTransmissionInfo> txOpps; // list with all tx opportunities calculated by SPS 
   SidelinkCommResourcePoolV2x::SidelinkTransmissionInfo txInfo; // selected resource
 
+  // modiftag ; startmodif
+  // map to store the UE IDs and the time of their last transmission
+  std::map<uint16_t, ns3::Time> m_nearby_ueList;
+  // function to add a UE to the above map
+  void AddToUniqueUeList(uint16_t nrbyL2Id, ns3::Time time);
+  //counter to keep track of current number of UEs in the map
+  uint16_t m_uniqueUeCounter = 0;
+  //function to update the m_uniqueUeCounter variable using the size of the map(m_nearby_ueList)
+  void UpdateUniqueUeCounter();
+  //function definition for RemoveOldUeFromList()
+  void RemoveOldUeFromList();
+      // //function definition for ScheduleRemoveOldEntries()
+      // void ScheduleRemoveOldEntries();
+  // set the first transmission status to default false
+  bool m_the_first_run = false;
+  //global store of last tx time
+  ns3::Time m_custom_lastTxTime;
+  //function to CalcMax_ITT
+  uint16_t CalcMax_ITT(uint16_t numNrbyUe);
+  //endmodif
 
   //sidelink variables
   struct SidelinkLcIdentifier

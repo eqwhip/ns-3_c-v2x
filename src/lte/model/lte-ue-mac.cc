@@ -44,9 +44,9 @@
 #include <bitset>
 #include <algorithm>
 
-
 #include "ns3/lte-rlc-tag.h"
 
+#include <unistd.h>
 
 
 namespace ns3 {
@@ -355,6 +355,41 @@ UeMemberLteUePhySapUser::PassSensingData(uint32_t frameNo, uint32_t subframeNo, 
 // LteUeMac methods
 ///////////////////////////////////////////////////////////
 
+//this function: //modiftag; startmodif
+//	: is used to update the counter m_uniqueUeCounter depending on number of UEs in the list (m_nearby_ueList)
+//	: is called when there is a change in the size of the list (m_nearby_ueList) i.e from functions AddToUniqueUeList () and RemoveOldUeFromList ()
+void
+LteUeMac::UpdateUniqueUeCounter ()
+{
+  m_uniqueUeCounter = m_nearby_ueList.size ();
+  printf ("Updated number of nearby UEs is %d\n", m_uniqueUeCounter);
+}
+
+// this function: //modiftag
+//  : is used to add the UE to the list (m_nearby_ueList) if it is not already in the list
+//	: will update the time if the UE is already in the list
+//	: is called by the function DoReceivePhyPdu ()
+//	: has input parameters as: the L2ID of the UE and the time at which the UE is heard
+void
+LteUeMac::AddToUniqueUeList(uint16_t local_l2Id, ns3::Time time)
+{
+  // Find if the L2Id is already in the list
+  auto it = m_nearby_ueList.find(local_l2Id);
+
+  // If the L2ID is not found in the list, add it, else update the time
+  if (it == m_nearby_ueList.end()) 
+  {
+    m_nearby_ueList[local_l2Id] = time;
+	//printf ("UE %d is added to the list, time is %f\n", local_l2Id, time.GetSeconds());
+	UpdateUniqueUeCounter ();  // updating the counter only if the UE is added to the list
+  }
+  else
+  {
+	//printf ("UE %d is already in the list, updated time is %f\n", local_l2Id, time.GetSeconds());
+    it->second = time;  // Update the time
+  }
+}
+//endmodif
 
 TypeId
 LteUeMac::GetTypeId (void)
@@ -591,6 +626,60 @@ LteUeMac::SetComponentCarrierId (uint8_t index)
   m_componentCarrierId = index;
 }
 
+//modiftag; startmodif
+void
+LteUeMac::RemoveOldUeFromList ()
+{
+  //printf ("RemoveOldUeFromList () is called\n");
+  // Find the current time
+  ns3::Time now = ns3::Simulator::Now ();
+  if (m_nearby_ueList.empty())
+  {
+	printf ("m_nearby_ueList is empty\n");
+	return;
+  }
+  else{
+	
+	// Iterate through the list and remove the UE if it is not heard for more than 1 second
+	for (auto it = m_nearby_ueList.begin(); it != m_nearby_ueList.end();)
+	{
+		//	printf("started the loop\n");
+		if (now - it->second > ns3::Seconds(1))
+		{
+		printf ("UE %d is removed from the list, time is %f\n", it->first, it->second.GetSeconds());
+		it = m_nearby_ueList.erase(it);
+		UpdateUniqueUeCounter ();  // updating the counter only if the UE is removed from the list
+		}
+		else
+		{
+		++it;
+		}
+	}
+	}
+ }
+
+//this function: //modiftag
+//	: is used to calculate the max ITT value depending on the number of UEs in the list (m_nearby_ueList)
+//	: returned value denotes the time gap between two transmissions in ms
+uint16_t
+LteUeMac::CalcMax_ITT (uint16_t numNrbyUe)
+{
+  printf ("the number of nearby UEs is %d\n", numNrbyUe);
+  if (numNrbyUe <= 25)
+  {
+	return 100;
+  }
+  else if (numNrbyUe > 25 && numNrbyUe <= 150)
+  {
+	uint16_t calc_val = 100 * numNrbyUe / 25;// instead of using the values from the table, calculating the value using the (as its a simple) formula
+	return calc_val;
+  }
+  else
+  {
+	return 600;
+  }
+}
+//endmodif
 void
 LteUeMac::DoTransmitPdu (LteMacSapProvider::TransmitPduParameters params)
 {
@@ -627,8 +716,31 @@ LteUeMac::DoTransmitPdu (LteMacSapProvider::TransmitPduParameters params)
 				// store pdu in HARQ buffer
 				poolIt->second.m_miSlHarqProcessPacket->AddPacket (params.pdu);
 			}
-
+		//modiftag; startmodif
+		//run the calculation only from the second transmission onwards
+		if (m_the_first_run == false)
+		{
+			//is the first run
+			m_the_first_run = true;
+		}
+		//else condition is executed when the m_the_first_run is false, which means that the m_max_itt is already set to a value
+		else
+		{
+			RemoveOldUeFromList ();	//update the m_nearby_ueList by removing all the UE's with time stamp older than 1 sec
+			// the unique UE counter is updated in the function RemoveOldUeFromList (), so consdiering that the counter is the latest
+			u_int16_t min_time_diff = CalcMax_ITT(m_uniqueUeCounter); //calculate the minimum interval time value depending on the number of UEs in the list (m_nearby_ueList)
+			//while loop to sleep for 1 millisecond until the time difference (between now and m_custom_lastTxTime) is greater than minimum interval time
+			while ( ( Simulator::Now ()- m_custom_lastTxTime ) < min_time_diff)
+			{
+				//sleep for one millisecond
+				sleep(0.01);
+				//printf ("time difference is %d\n", time_difference);
+			}
+		}
 		m_uePhySapProvider->SendMacPdu (params.pdu);
+		//set the m_custom_lastTxTime to current time
+		m_custom_lastTxTime = Simulator::Now ();
+		//endmodif
 	}
 }
 
@@ -1366,6 +1478,13 @@ LteUeMac::DoReceivePhyPdu (Ptr<Packet> p)
 				identifier.lcId = tag.GetLcid ();
 				identifier.srcL2Id = tag.GetSourceL2Id ();
 				identifier.dstL2Id = tag.GetDestinationL2Id ();
+
+				//modiftag; startModif; below additions will ensure that the L2 ID of the sender (pertaining to this packet) is added to the list of nearby UEs
+				//std::cout<<"the l2id of the sender is "<<tag.GetSourceL2Id()<<std::endl;
+				uint16_t senderL2ID = tag.GetSourceL2Id();
+				ns3::Time receiveTime = ns3::Simulator::Now();
+				AddToUniqueUeList(senderL2ID, receiveTime);
+				//using above function the L2 Id is added to the list of nearby UEs; endModif
 
 				std::map <SidelinkLcIdentifier, LcInfo>::iterator it = m_slLcInfoMap.find (identifier);
 				if (it == m_slLcInfoMap.end ())
